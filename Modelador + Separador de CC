@@ -1,0 +1,88 @@
+# Importar bibliotecas necessárias
+import os
+import pandas as pd
+from google.colab import files
+
+# Passo 1: Upload do arquivo Excel
+print("Faça o upload do arquivo Excel (MODELO.xlsx):")
+uploaded = files.upload()
+
+# Obter o nome do arquivo carregado
+arquivo_excel = list(uploaded.keys())[0]
+
+# Passo 2: Manipular a planilha MODELO.xlsx
+# Carregar o arquivo Excel original
+modelo_excel = pd.ExcelFile(arquivo_excel)
+
+# Ler a aba principal
+df = pd.read_excel(modelo_excel, sheet_name=0)  # Considera a primeira aba como padrão
+
+# Etapa 1: Excluir a primeira coluna (coluna "A")
+df.drop(df.columns[0], axis=1, inplace=True)
+
+# Etapa 2: Inserir uma nova coluna vazia entre "Nome Item" e "Centro de Custo"
+colunas = df.columns.tolist()
+indice_centro_custo = colunas.index("Centro de Custo")
+df.insert(indice_centro_custo, "Nova Coluna", "")
+
+# Etapa 3: Mover a coluna "Observação NF" para a nova coluna inserida
+indice_observacao_nf = colunas.index("Observação NF")
+df["Nova Coluna"] = df.iloc[:, indice_observacao_nf]
+df.drop(df.columns[indice_observacao_nf], axis=1, inplace=True)
+
+# Etapa 4: Excluir todas as colunas após "Total Item"
+indice_total_item = colunas.index("Total Item")
+df = df.iloc[:, :indice_total_item + 1]
+
+# Etapa 5: Filtrar e excluir linhas na coluna "Centro de Custo"
+df = df[df["Centro de Custo"].notna() & (df["Centro de Custo"] <= 404)]
+
+# Etapa 6: Filtrar e excluir linhas na coluna "Código da conta"
+df = df[df["Código da conta"].str.startswith(("4.1", "4.2"), na=False)]
+
+# Salvar a planilha ajustada
+arquivo_ajustado = "planilha_ajustada.xlsx"
+df.to_excel(arquivo_ajustado, index=False)
+print(f"Planilha ajustada salva como: {arquivo_ajustado}")
+
+# Passo 3: Carregar a planilha ajustada para processamento adicional
+ajustada_excel = pd.ExcelFile(arquivo_ajustado)
+notas_df = pd.read_excel(ajustada_excel, sheet_name=0)  # Primeira aba ajustada
+distribuicao_df = pd.read_excel(ajustada_excel, sheet_name="DISTRIBUICAO")  # Aba DISTRIBUICAO
+
+# Passo 4: Identificar os Centros de Custo únicos
+centros_de_custo_unicos = notas_df["Centro de Custo"].unique()
+
+# Criar pasta para salvar arquivos gerados
+output_folder = "/content/Planilhas_Centros_de_Custo"
+os.makedirs(output_folder, exist_ok=True)
+
+# Passo 5: Processar cada Centro de Custo
+for centro_custo in centros_de_custo_unicos:
+    # Filtrar os dados da aba NOTAS para o Centro de Custo atual
+    notas_filtradas = notas_df[notas_df["Centro de Custo"] == centro_custo]
+    
+    # Determinar as linhas da aba DISTRIBUICAO para o Centro de Custo atual
+    inicio_linha = distribuicao_df[distribuicao_df["Código da regra de distribuição"] == centro_custo].index.min()
+    indices_ordenados = distribuicao_df["Código da regra de distribuição"].dropna().index
+    proximo_centro_idx = indices_ordenados[indices_ordenados > inicio_linha].min() if inicio_linha is not None else None
+    
+    if pd.notnull(inicio_linha):
+        if pd.notnull(proximo_centro_idx):
+            distribuicao_filtrada = distribuicao_df.iloc[inicio_linha:proximo_centro_idx]
+        else:
+            distribuicao_filtrada = distribuicao_df.iloc[inicio_linha:]
+    else:
+        distribuicao_filtrada = pd.DataFrame()
+
+    # Criar um novo arquivo Excel para o Centro de Custo
+    centro_custo_file_path = os.path.join(output_folder, f"Centro_de_Custo_{int(centro_custo)}.xlsx")
+    with pd.ExcelWriter(centro_custo_file_path, engine="openpyxl") as writer:
+        notas_filtradas.to_excel(writer, sheet_name="NOTAS", index=False)
+        distribuicao_filtrada.to_excel(writer, sheet_name="DISTRIBUICAO", index=False)
+
+# Passo 6: Compactar e permitir o download dos arquivos gerados
+import shutil
+shutil.make_archive("Planilhas_Centros_de_Custo", 'zip', output_folder)
+print("Processamento concluído! Faça o download dos arquivos gerados.")
+files.download("Planilhas_Centros_de_Custo.zip")
