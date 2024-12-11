@@ -1,88 +1,94 @@
-# Importar bibliotecas necessárias
-import os
 import pandas as pd
+import os
 from google.colab import files
+import shutil
 
 # Passo 1: Upload do arquivo Excel
-print("Faça o upload do arquivo Excel (MODELO.xlsx):")
+print("Faça o upload do arquivo Excel:")
 uploaded = files.upload()
 
+# Passo 2: Carregar o arquivo Excel carregado
 # Obter o nome do arquivo carregado
 arquivo_excel = list(uploaded.keys())[0]
 
-# Passo 2: Manipular a planilha MODELO.xlsx
-# Carregar o arquivo Excel original
-modelo_excel = pd.ExcelFile(arquivo_excel)
+# Passo 3: Ler as abas NOTAS e DISTRIBUICAO
+saida_excel = pd.ExcelFile(arquivo_excel)
+notas_df = pd.read_excel(saida_excel, sheet_name="NOTAS")
+distribuicao_df = pd.read_excel(saida_excel, sheet_name="DISTRIBUICAO")
 
-# Ler a aba principal
-df = pd.read_excel(modelo_excel, sheet_name=0)  # Considera a primeira aba como padrão
+# Passo 4: Copiar os dados da planilha "NOTAS" para aplicar as transformações
+df = notas_df.copy()
 
-# Etapa 1: Excluir a primeira coluna (coluna "A")
-df.drop(df.columns[0], axis=1, inplace=True)
+# Excluir a primeira coluna (coluna "A")
+df = df.iloc[:, 1:]
 
-# Etapa 2: Inserir uma nova coluna vazia entre "Nome Item" e "Centro de Custo"
+# Inserir uma nova coluna vazia entre "Nome Item" e "Centro de Custo"
+# Localizar as colunas para inserir no local correto
 colunas = df.columns.tolist()
-indice_centro_custo = colunas.index("Centro de Custo")
-df.insert(indice_centro_custo, "Nova Coluna", "")
+if "Nome Item" in colunas and "Centro de Custo" in colunas:
+    idx_nome_item = colunas.index("Nome Item")
+    idx_centro_custo = colunas.index("Centro de Custo")
+    if idx_centro_custo == idx_nome_item + 1:  # Garantir que estão consecutivas
+        df.insert(idx_centro_custo, "Nova Coluna", "")
 
-# Etapa 3: Mover a coluna "Observação NF" para a nova coluna inserida
-indice_observacao_nf = colunas.index("Observação NF")
-df["Nova Coluna"] = df.iloc[:, indice_observacao_nf]
-df.drop(df.columns[indice_observacao_nf], axis=1, inplace=True)
+# Mover a coluna "Observação NF" para a nova coluna inserida
+if "Observação NF" in df.columns and "Nova Coluna" in df.columns:
+    df["Nova Coluna"] = df["Observação NF"]
+    df.drop(columns=["Observação NF"], inplace=True)
 
-# Etapa 4: Excluir todas as colunas após "Total Item"
-indice_total_item = colunas.index("Total Item")
-df = df.iloc[:, :indice_total_item + 1]
+# Excluir todas as colunas após "Total Item"
+if "Total Item" in df.columns:
+    total_item_index = df.columns.get_loc("Total Item")
+    df = df.iloc[:, :total_item_index + 1]
 
-# Etapa 5: Filtrar e excluir linhas na coluna "Centro de Custo"
-df = df[df["Centro de Custo"].notna() & (df["Centro de Custo"] <= 404)]
+# Filtrar a coluna "Centro de Custo" e excluir linhas com valores inválidos
+if "Centro de Custo" in df.columns:
+    df = df[df["Centro de Custo"].notnull() & (df["Centro de Custo"] <= 404)]
 
-# Etapa 6: Filtrar e excluir linhas na coluna "Código da conta"
-df = df[df["Código da conta"].str.startswith(("4.1", "4.2"), na=False)]
+# Filtrar a coluna "Código da conta" para valores começando com "4.1" ou "4.2"
+if "Código da conta" in df.columns:
+    df = df[df["Código da conta"].str.startswith(("4.1", "4.2"), na=False)]
 
-# Salvar a planilha ajustada
-arquivo_ajustado = "planilha_ajustada.xlsx"
-df.to_excel(arquivo_ajustado, index=False)
-print(f"Planilha ajustada salva como: {arquivo_ajustado}")
+# Atualizar o DataFrame de NOTAS com os dados transformados
+notas_df = df
 
-# Passo 3: Carregar a planilha ajustada para processamento adicional
-ajustada_excel = pd.ExcelFile(arquivo_ajustado)
-notas_df = pd.read_excel(ajustada_excel, sheet_name=0)  # Primeira aba ajustada
-distribuicao_df = pd.read_excel(ajustada_excel, sheet_name="DISTRIBUICAO")  # Aba DISTRIBUICAO
-
-# Passo 4: Identificar os Centros de Custo únicos
+# Passo 5: Identificar os Centros de Custo únicos na aba NOTAS
 centros_de_custo_unicos = notas_df["Centro de Custo"].unique()
 
-# Criar pasta para salvar arquivos gerados
+# Passo 6: Criar pasta para salvar arquivos gerados
 output_folder = "/content/Planilhas_Centros_de_Custo"
 os.makedirs(output_folder, exist_ok=True)
 
-# Passo 5: Processar cada Centro de Custo
+# Passo 7: Processar cada Centro de Custo
 for centro_custo in centros_de_custo_unicos:
     # Filtrar os dados da aba NOTAS para o Centro de Custo atual
     notas_filtradas = notas_df[notas_df["Centro de Custo"] == centro_custo]
-    
+
     # Determinar as linhas da aba DISTRIBUICAO para o Centro de Custo atual
+    # Localizar o índice inicial do Centro de Custo atual
     inicio_linha = distribuicao_df[distribuicao_df["Código da regra de distribuição"] == centro_custo].index.min()
+
+    # Localizar o índice do próximo Centro de Custo
     indices_ordenados = distribuicao_df["Código da regra de distribuição"].dropna().index
     proximo_centro_idx = indices_ordenados[indices_ordenados > inicio_linha].min() if inicio_linha is not None else None
-    
+
+    # Selecionar as linhas entre inicio_linha e a linha antes do próximo Centro de Custo
     if pd.notnull(inicio_linha):
         if pd.notnull(proximo_centro_idx):
             distribuicao_filtrada = distribuicao_df.iloc[inicio_linha:proximo_centro_idx]
         else:
             distribuicao_filtrada = distribuicao_df.iloc[inicio_linha:]
     else:
-        distribuicao_filtrada = pd.DataFrame()
+        distribuicao_filtrada = pd.DataFrame()  # Caso não haja correspondência
 
     # Criar um novo arquivo Excel para o Centro de Custo
     centro_custo_file_path = os.path.join(output_folder, f"Centro_de_Custo_{int(centro_custo)}.xlsx")
+
     with pd.ExcelWriter(centro_custo_file_path, engine="openpyxl") as writer:
         notas_filtradas.to_excel(writer, sheet_name="NOTAS", index=False)
         distribuicao_filtrada.to_excel(writer, sheet_name="DISTRIBUICAO", index=False)
 
-# Passo 6: Compactar e permitir o download dos arquivos gerados
-import shutil
+# Passo 8: Compactar e permitir o download de todos os arquivos gerados
 shutil.make_archive("Planilhas_Centros_de_Custo", 'zip', output_folder)
 print("Processamento concluído! Faça o download dos arquivos gerados.")
 files.download("Planilhas_Centros_de_Custo.zip")
